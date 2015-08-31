@@ -1,10 +1,12 @@
 /* Copyright 2013-2015 Fabian Steeg, Pascal Christoph, hbz. Licensed under the Eclipse Public License 1.0 */
 
-package org.lobid.lodmill;
+package org.lobid.resources;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 
+import org.apache.commons.io.FileUtils;
 import org.culturegraph.mf.framework.DefaultObjectPipe;
 import org.culturegraph.mf.framework.ObjectReceiver;
 import org.culturegraph.mf.framework.annotations.In;
@@ -18,7 +20,7 @@ import com.github.jsonldjava.core.JsonLdError;
 import com.github.jsonldjava.core.JsonLdOptions;
 import com.github.jsonldjava.core.JsonLdProcessor;
 import com.github.jsonldjava.jena.JenaRDFParser;
-import com.github.jsonldjava.utils.JSONUtils;
+import com.github.jsonldjava.utils.JsonUtils;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.ModelFactory;
 import com.hp.hpl.jena.rdf.model.ResIterator;
@@ -52,7 +54,17 @@ public final class RdfModel2ElasticsearchJsonLd
 	private static String mainNodeId;
 	private static final String TYPE_ITEM = "json-ld-lobid-item";
 	private static final String TYPE_RESOURCE = "json-ld-lobid";
-	private static final JenaRDFParser parser = new JenaRDFParser();
+	private static Object frame = null;
+
+	@Override
+	public void onSetReceiver() {
+		try {
+			frame = JsonUtils.fromInputStream(
+					FileUtils.openInputStream(new File("src/main/resources/frame.json")));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
 
 	@Override
 	public void process(final Model originModel) {
@@ -73,22 +85,21 @@ public final class RdfModel2ElasticsearchJsonLd
 					shouldSubmodelBeExtracted(submodel, subjectResource);
 					try {
 						Object json =
-								JsonLdProcessor.fromRDF(submodel, new JsonLdOptions(), parser);
-						ABOUT_JSON = JSONUtils.toString(JsonLdProcessor.expand(json));
+								JsonLdProcessor.fromRDF(submodel, new JenaRDFParser());
+						ABOUT_JSON = JsonUtils.toString(JsonLdProcessor.expand(json));
 						ABOUT_JSON = "," + ABOUT_JSON.substring(2, ABOUT_JSON.length() - 2);
-					} catch (JsonLdError e) {
-						// TODO Auto-generated catch block
+					} catch (JsonLdError | IOException e) {
 						e.printStackTrace();
 					}
 				} else {
-					// just extract sub nodes we don't want to keep in the main model
+					// extract sub nodes we don't want to keep in the main model
 					if (!subjectResource.getURI().startsWith(KEEP_NODE_PREFIX)
 							&& !subjectResource.getURI().startsWith(KEEP_NODE_MAIN_PREFIX)) {
 						if (shouldSubmodelBeExtracted(submodel, subjectResource)) {
 							toJson(submodel, subjectResource.getURI().toString(), "");
 						}
-					} else
-						if (subjectResource.getURI().toString().startsWith(LOBID_DOMAIN))
+					} else if (subjectResource.getURI().toString()
+							.startsWith(LOBID_DOMAIN))
 						mainNodeId = subjectResource.getURI().toString();
 				}
 				if (!submodel.isEmpty()) {
@@ -97,7 +108,7 @@ public final class RdfModel2ElasticsearchJsonLd
 				}
 			}
 		}
-		// the main node (with its kept sub node) and an optional "about" metadata
+		// main node (with its kept sub node) and an optional "about" metadata
 		toJson(copyOfOriginalModel, mainNodeId, ABOUT_JSON);
 	}
 
@@ -125,15 +136,22 @@ public final class RdfModel2ElasticsearchJsonLd
 	 * @param id
 	 */
 	private void toJson(Model model, String id, String aboutJson) {
-		if (model.isEmpty())
+		if (model.isEmpty()) {
+			System.out.println("model is empty");
 			return;
+		}
+		JsonLdOptions jldOptions = new JsonLdOptions();
+		// jldOptions.setCompactArrays(true);
+		// jldOptions.setEmbed(false);
+		// jldOptions.setExplicit(false);
 		try {
-			Object json = JsonLdProcessor.fromRDF(model, new JsonLdOptions(), parser);
-			// the json document itself
-			json = JsonLdProcessor.expand(json);
+			Object json = JsonLdProcessor.fromRDF(model, new JenaRDFParser());
+			// here the '@' is needed (Json-LD vs Json).
+			json = JsonLdProcessor.frame(json, frame, jldOptions)
+					.get("@" + ElasticsearchIndexer.Properties.GRAPH.getName());
 			getReceiver().process(addInternalProperties(new HashMap<String, String>(),
-					id, JSONUtils.toString(json), aboutJson));
-		} catch (JsonLdError e) {
+					id, JsonUtils.toString(json), aboutJson));
+		} catch (JsonLdError | IOException e) {
 			e.printStackTrace();
 		}
 	}
@@ -149,7 +167,9 @@ public final class RdfModel2ElasticsearchJsonLd
 				JsonNode node = new ObjectMapper().readValue(json, JsonNode.class);
 				final JsonNode parent = node.findValue(PROPERTY_TO_PARENT);
 				String p = parent != null ? parent.findValue("@id").asText() : null;
-				internal_parent = ",\"_parent\":\"" + p + "\"";
+				internal_parent =
+						",\"" + ElasticsearchIndexer.Properties.PARENT.getName() + "\":\""
+								+ p + "\"";
 				if (p == null) {
 					LOG.warn("Item URI " + id + " has no parent declared!");
 					jsonMap.put(ElasticsearchIndexer.Properties.PARENT.getName(),
@@ -161,9 +181,10 @@ public final class RdfModel2ElasticsearchJsonLd
 				e.printStackTrace();
 			}
 		}
-		// wrap json into a "@graph" for elasticsearch (still valid JSON-LD)
-		String jsonDocument = "{\"@graph\":" + json + ",\"internal_id\":\"" + id
-				+ "\"" + internal_parent + aboutJson + "}";
+		// wrap json document into "graph" to add elasticsearch internals
+		String jsonDocument = "{\""
+				+ ElasticsearchIndexer.Properties.GRAPH.getName() + "\":" + json
+				+ ",\"internal_id\":\"" + id + "\"" + internal_parent + aboutJson + "}";
 		jsonMap.put(ElasticsearchIndexer.Properties.GRAPH.getName(), jsonDocument);
 		jsonMap.put(ElasticsearchIndexer.Properties.TYPE.getName(), type);
 		jsonMap.put(ElasticsearchIndexer.Properties.ID.getName(), id);

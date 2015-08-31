@@ -1,6 +1,6 @@
 /* Copyright 2013-015 Fabian Steeg, Pascal Christoph, hbz. Licensed under the Eclipse Public License 1.0 */
 
-package org.lobid.lodmill;
+package org.lobid.resources;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.SortedSet;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import org.culturegraph.mf.framework.DefaultObjectPipe;
@@ -44,9 +45,11 @@ import com.google.common.io.CharStreams;
  */
 @In(HashMap.class)
 @Out(Void.class)
-public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, String>, ObjectReceiver<Void>> {
+public class ElasticsearchIndexer
+		extends DefaultObjectPipe<HashMap<String, String>, ObjectReceiver<Void>> {
 
-	private static final Logger LOG = LoggerFactory.getLogger(ElasticsearchIndexer.class);
+	private static final Logger LOG =
+			LoggerFactory.getLogger(ElasticsearchIndexer.class);
 	private String hostname;
 	private String clustername;
 	private BulkRequestBuilder bulkRequest;
@@ -54,7 +57,10 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	private InetSocketTransportAddress NODE;
 	private TransportClient tc;
 	private UpdateRequest updateRequest;
-	private Client client;
+	/**
+	 * 
+	 */
+	public Client client;
 	private int retries = 40;
 	// collect so many documents before bulk indexing them all
 	private int bulkSize = 5000;
@@ -68,7 +74,8 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	 */
 	@SuppressWarnings("javadoc")
 	public static enum Properties {
-		INDEX("_index"), TYPE("_type"), ID("_id"), PARENT("_parent"), GRAPH("graph");
+		INDEX("_index"), TYPE("_type"), ID("_id"), PARENT("_parent"), GRAPH(
+				"graph");
 		private final String name;
 
 		Properties(final String name) {
@@ -83,23 +90,39 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	@Override
 	protected void onCloseStream() {
 		// feed the rest of the bulk
-		bulkRequest.execute().actionGet();
-		if (!aliasSuffix.equals("NOALIAS") && !updateIndex && !aliasSuffix.toLowerCase().contains("test"))
+		if (docs > 0)
+			try {
+				bulkRequest.execute().get();
+			} catch (InterruptedException | ExecutionException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+		if (!aliasSuffix.equals("NOALIAS") && !updateIndex
+				&& !aliasSuffix.toLowerCase().contains("test"))
 			updateAliases(indexName, aliasSuffix);
-		bulkRequest.setRefresh(true).get();
+		try {
+			Thread.sleep(10000);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		bulkRequest.setRefresh(true);
 	}
 
 	// TODO use BulkProcessorbuilder by updating to ES 1.5
 	@Override
 	public void onSetReceiver() {
 		if (client == null) {
-			this.CLIENT_SETTINGS = ImmutableSettings.settingsBuilder().put("cluster.name", this.clustername);
+			this.CLIENT_SETTINGS = ImmutableSettings.settingsBuilder()
+					.put("cluster.name", this.clustername);
 			this.NODE = new InetSocketTransportAddress(this.hostname, 9300);
-			this.tc = new TransportClient(this.CLIENT_SETTINGS.put("client.transport.sniff", false)
+			this.tc = new TransportClient(this.CLIENT_SETTINGS
+					.put("client.transport.sniff", false)
 					.put("client.transport.ping_timeout", 120, TimeUnit.SECONDS).build());
 			this.client = this.tc.addTransportAddress(this.NODE);
 		}
 		bulkRequest = client.prepareBulk();
+		bulkRequest.setRefresh(false);
 		if (updateIndex) {
 			getNewestIndex();
 		} else
@@ -109,9 +132,13 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 
 	@Override
 	public void process(final HashMap<String, String> json) {
-		updateRequest = new UpdateRequest(indexName, json.get(Properties.TYPE.getName()),
-				json.get(Properties.ID.getName()));
+		updateRequest = new UpdateRequest(indexName,
+				json.get(Properties.TYPE.getName()), json.get(Properties.ID.getName()));
 		updateRequest.doc(json.get(Properties.GRAPH.getName()));
+		System.out
+				.println("HEAD=" + indexName + "," + json.get(Properties.TYPE.getName())
+						+ "," + json.get(Properties.ID.getName()));
+		System.out.println("to INDEX=" + json.get(Properties.GRAPH.getName()));
 		updateRequest.docAsUpsert(true);
 		if (json.containsKey(Properties.PARENT.getName())) {
 			updateRequest.parent(json.get(Properties.PARENT.getName()));
@@ -120,20 +147,20 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 		docs++;
 		while (docs > bulkSize && retries > 0) {
 			try {
-				bulkRequest.execute().actionGet();
+				bulkRequest.execute().get();
 				docs = 0;
 				bulkRequest = client.prepareBulk();
-				bulkRequest.setRefresh(false);
 				break; // stop retry-while
-			} catch (final NoNodeAvailableException e) {
+			} catch (final NoNodeAvailableException | InterruptedException
+					| ExecutionException e) {
 				retries--;
 				try {
 					Thread.sleep(10000);
 				} catch (final InterruptedException x) {
 					x.printStackTrace();
 				}
-				LOG.warn("Retry indexing record" + json.get(Properties.ID.getName()) + ":" + e.getMessage() + " ("
-						+ retries + " more retries)");
+				LOG.warn("Retry indexing record" + json.get(Properties.ID.getName())
+						+ ":" + e.getMessage() + " (" + retries + " more retries)");
 			}
 		}
 	}
@@ -141,8 +168,7 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	/**
 	 * Sets the elasticsearch cluster name.
 	 * 
-	 * @param clustername
-	 *            the name of the cluster
+	 * @param clustername the name of the cluster
 	 */
 	public void setClustername(final String clustername) {
 		this.clustername = clustername;
@@ -151,8 +177,7 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	/**
 	 * Sets the elasticsearch hostname
 	 * 
-	 * @param hostname
-	 *            may be an IP or a domain name
+	 * @param hostname may be an IP or a domain name
 	 */
 	public void setHostname(final String hostname) {
 		this.hostname = hostname;
@@ -161,8 +186,7 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	/**
 	 * Sets the elasticsearch index name
 	 * 
-	 * @param indexname
-	 *            name of the index
+	 * @param indexname name of the index
 	 */
 	public void setIndexName(final String indexname) {
 		this.indexName = indexname;
@@ -171,8 +195,7 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	/**
 	 * Sets the suffix of elasticsearch index alias suffix
 	 * 
-	 * @param aliasSuffix
-	 *            may be an IP or a domain name
+	 * @param aliasSuffix may be an IP or a domain name
 	 */
 	public void setIndexAliasSuffix(String aliasSuffix) {
 		this.aliasSuffix = aliasSuffix;
@@ -182,8 +205,7 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	/**
 	 * Sets the elasticsearch client.
 	 * 
-	 * @param client
-	 *            the elasticsearch client
+	 * @param client the elasticsearch client
 	 */
 	public void setElasticsearchClient(Client client) {
 		this.client = client;
@@ -192,8 +214,7 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	/**
 	 * Sets the elasticsearch index name
 	 * 
-	 * @param updateIndex
-	 *            name of the index
+	 * @param updateIndex name of the index
 	 */
 	public void setUpdateNewestIndex(final boolean updateIndex) {
 		this.updateIndex = updateIndex;
@@ -201,7 +222,8 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 
 	private void getNewestIndex() {
 		String indexNameWithoutTimestamp = indexName.replaceAll("20.*", "");
-		final SortedSetMultimap<String, String> indices = groupByIndexCollection(indexName);
+		final SortedSetMultimap<String, String> indices =
+				groupByIndexCollection(indexName);
 		for (String prefix : indices.keySet()) {
 			final SortedSet<String> indicesForPrefix = indices.get(prefix);
 			final String newestIndex = indicesForPrefix.last();
@@ -213,12 +235,14 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 
 	private void createIndex() {
 		IndicesAdminClient adminClient = client.admin().indices();
-		if (!adminClient.prepareExists(indexName).execute().actionGet().isExists()) {
+		if (!adminClient.prepareExists(indexName).execute().actionGet()
+				.isExists()) {
 			LOG.info("Going to CREATE new index " + indexName);
 
 			String config = config();
 			if (config != null)
-				adminClient.prepareCreate(indexName).setSource(config()).execute().actionGet();
+				adminClient.prepareCreate(indexName).setSource(config()).execute()
+						.actionGet();
 			else
 				adminClient.prepareCreate(indexName).execute().actionGet();
 		} else
@@ -231,7 +255,8 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 			final InputStream config = Thread.currentThread().getContextClassLoader()
 					.getResourceAsStream("index-config.json");
 			if (config != null)
-				try (InputStreamReader reader = new InputStreamReader(config, "UTF-8")) {
+				try (
+						InputStreamReader reader = new InputStreamReader(config, "UTF-8")) {
 					res = CharStreams.toString(reader);
 				}
 		} catch (IOException e) {
@@ -241,7 +266,8 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 	}
 
 	private void updateAliases(final String name, final String suffix) {
-		final SortedSetMultimap<String, String> indices = groupByIndexCollection(name);
+		final SortedSetMultimap<String, String> indices =
+				groupByIndexCollection(name);
 		for (String prefix : indices.keySet()) {
 			final SortedSet<String> indicesForPrefix = indices.get(prefix);
 			final String newIndex = indicesForPrefix.last();
@@ -254,9 +280,11 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 		}
 	}
 
-	private SortedSetMultimap<String, String> groupByIndexCollection(final String name) {
+	private SortedSetMultimap<String, String> groupByIndexCollection(
+			final String name) {
 		final SortedSetMultimap<String, String> indices = TreeMultimap.create();
-		for (String index : client.admin().indices().prepareStats().execute().actionGet().getIndices().keySet()) {
+		for (String index : client.admin().indices().prepareStats().execute()
+				.actionGet().getIndices().keySet()) {
 			final String[] nameAndTimestamp = index.split("-(?=\\d)");
 			if (name.startsWith(nameAndTimestamp[0]))
 				indices.put(nameAndTimestamp[0], index);
@@ -264,13 +292,15 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 		return indices;
 	}
 
-	private void removeOldAliases(final SortedSet<String> indicesForPrefix, final String newAlias) {
+	private void removeOldAliases(final SortedSet<String> indicesForPrefix,
+			final String newAlias) {
 		for (String name : indicesForPrefix) {
 			final Set<String> aliases = aliases(name);
 			for (String alias : aliases) {
 				if (alias.equals(newAlias)) {
 					LOG.info("Delete alias index,alias: " + name + "," + alias);
-					client.admin().indices().prepareAliases().removeAlias(name, alias).execute().actionGet();
+					client.admin().indices().prepareAliases().removeAlias(name, alias)
+							.execute().actionGet();
 				}
 			}
 		}
@@ -278,26 +308,30 @@ public class ElasticsearchIndexer extends DefaultObjectPipe<HashMap<String, Stri
 
 	private void createNewAlias(final String newIndex, final String newAlias) {
 		LOG.info("Create alias index,alias: " + newIndex + "," + newAlias);
-		client.admin().indices().prepareAliases().addAlias(newIndex, newAlias).execute().actionGet();
+		client.admin().indices().prepareAliases().addAlias(newIndex, newAlias)
+				.execute().actionGet();
 	}
 
-	private void deleteOldIndices(final String name, final SortedSet<String> allIndices) {
+	private void deleteOldIndices(final String name,
+			final SortedSet<String> allIndices) {
 		if (allIndices.size() >= 3) {
 			final List<String> list = new ArrayList<>(allIndices);
 			list.remove(name);
 			for (String indexToDelete : list.subList(0, list.size() - 2)) {
 				if (aliases(indexToDelete).isEmpty()) {
 					LOG.info("Deleting index: " + indexToDelete);
-					client.admin().indices().delete(new DeleteIndexRequest(indexToDelete)).actionGet();
+					client.admin().indices().delete(new DeleteIndexRequest(indexToDelete))
+							.actionGet();
 				}
 			}
 		}
 	}
 
 	private Set<String> aliases(final String name) {
-		final ClusterStateRequest clusterStateRequest = Requests.clusterStateRequest().nodes(true).indices(name);
-		return Sets.newHashSet(client.admin().cluster().state(clusterStateRequest).actionGet().getState().getMetaData()
-				.aliases().keysIt());
+		final ClusterStateRequest clusterStateRequest =
+				Requests.clusterStateRequest().nodes(true).indices(name);
+		return Sets.newHashSet(client.admin().cluster().state(clusterStateRequest)
+				.actionGet().getState().getMetaData().aliases().keysIt());
 	}
 
 }
