@@ -18,7 +18,7 @@ import com.github.jsonldjava.core.JsonLdError;
 import com.github.jsonldjava.core.JsonLdOptions;
 import com.github.jsonldjava.core.JsonLdProcessor;
 import com.github.jsonldjava.jena.JenaRDFParser;
-import com.github.jsonldjava.utils.JSONUtils;
+import com.github.jsonldjava.utils.JsonUtils;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.ModelFactory;
 import com.hp.hpl.jena.rdf.model.ResIterator;
@@ -74,14 +74,15 @@ public final class RdfModel2ElasticsearchJsonLd
 					try {
 						Object json =
 								JsonLdProcessor.fromRDF(submodel, new JsonLdOptions(), parser);
-						ABOUT_JSON = JSONUtils.toString(JsonLdProcessor.expand(json));
-						ABOUT_JSON = "," + ABOUT_JSON.substring(2, ABOUT_JSON.length() - 2);
-					} catch (JsonLdError e) {
+						ABOUT_JSON = JsonUtils.toString(JsonLdProcessor.expand(json));
+						ABOUT_JSON = ABOUT_JSON.substring(1, ABOUT_JSON.length() - 1);
+					} catch (JsonLdError | IOException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
 				} else {
-					// just extract sub nodes we don't want to keep in the main model
+					// just extract sub nodes we don't want to keep in the main
+					// model
 					if (!subjectResource.getURI().startsWith(KEEP_NODE_PREFIX)
 							&& !subjectResource.getURI().startsWith(KEEP_NODE_MAIN_PREFIX)) {
 						if (shouldSubmodelBeExtracted(submodel, subjectResource)) {
@@ -97,7 +98,8 @@ public final class RdfModel2ElasticsearchJsonLd
 				}
 			}
 		}
-		// the main node (with its kept sub node) and an optional "about" metadata
+		// the main node (with its kept sub node) and an optional "about"
+		// metadata
 		toJson(copyOfOriginalModel, mainNodeId, ABOUT_JSON);
 	}
 
@@ -105,15 +107,16 @@ public final class RdfModel2ElasticsearchJsonLd
 	// node of the main node. An bnode mustn't be extracted either.
 	private static boolean shouldSubmodelBeExtracted(Model submodel,
 			Resource subjectResource) {
+
 		StmtIterator stmtIt = subjectResource.listProperties();
 		while (stmtIt.hasNext()) {
 			Statement stmt = stmtIt.nextStatement();
 			// identifying the main node
 			if (stmt.getObject().toString().startsWith(KEEP_NODE_PREFIX))
 				return false;
-			submodel.add(stmt);
+			// submodel.add(stmt);
 		}
-		return true;
+		return false;
 	}
 
 	/**
@@ -131,9 +134,15 @@ public final class RdfModel2ElasticsearchJsonLd
 			Object json = JsonLdProcessor.fromRDF(model, new JsonLdOptions(), parser);
 			// the json document itself
 			json = JsonLdProcessor.expand(json);
+			JsonLdOptions jopts = new JsonLdOptions();
+			jopts.setCompactArrays(false);
+			// json = JsonLdProcessor.frame(json,
+			// JsonUtils.fromString(
+			// "{\"@context\": \"http://lobid.org/context/lobid-resources.json\"}"),
+			// jopts).get("@graph");
 			getReceiver().process(addInternalProperties(new HashMap<String, String>(),
-					id, JSONUtils.toString(json), aboutJson));
-		} catch (JsonLdError e) {
+					id, JsonUtils.toString(json), aboutJson));
+		} catch (JsonLdError | IOException e) {
 			e.printStackTrace();
 		}
 	}
@@ -161,10 +170,34 @@ public final class RdfModel2ElasticsearchJsonLd
 				e.printStackTrace();
 			}
 		}
+
 		// wrap json into a "@graph" for elasticsearch (still valid JSON-LD)
-		String jsonDocument = "{\"@graph\":" + json + ",\"internal_id\":\"" + id
-				+ "\"" + internal_parent + aboutJson + "}";
-		jsonMap.put(ElasticsearchIndexer.Properties.GRAPH.getName(), jsonDocument);
+		// String jsonDocument = "{\"@graph\":" + json + ",\"internal_id\":\"" + id
+		// + "\"" + internal_parent + aboutJson + "}";
+
+		JsonLdOptions jopts = new JsonLdOptions();
+		jopts.setCompactArrays(false);
+		// JsonLdProcessor.compact
+		Object jsonObj;
+		try {
+			jsonObj = JsonUtils.fromString(json);
+			jsonObj = JsonLdProcessor.frame(jsonObj,
+					JsonUtils.fromString(
+							"{\"@context\": \"http://lobid.org/context/lobid-resources.json\"}"),
+					jopts).get("@graph");
+			String json1 = JsonUtils.toString(jsonObj);
+			// Object frameObj =
+			// JsonUtils.fromString("http://lobid.org/context/lobid-resources.json");
+
+			jsonMap.put(ElasticsearchIndexer.Properties.GRAPH.getName(),
+					"{" + json1 + internal_parent + ",\"internal_id\":\"" + id + "\"}");
+
+		} catch (IOException | JsonLdError e) {
+			// TODO Auto-generated catch block
+
+			e.printStackTrace();
+		}
+
 		jsonMap.put(ElasticsearchIndexer.Properties.TYPE.getName(), type);
 		jsonMap.put(ElasticsearchIndexer.Properties.ID.getName(), id);
 		return jsonMap;

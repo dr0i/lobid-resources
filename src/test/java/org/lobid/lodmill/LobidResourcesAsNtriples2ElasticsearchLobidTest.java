@@ -26,9 +26,9 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.github.jsonldjava.core.JsonLdError;
+import com.github.jsonldjava.core.JsonLdOptions;
 import com.github.jsonldjava.core.JsonLdProcessor;
-import com.github.jsonldjava.jena.JenaTripleCallback;
-import com.github.jsonldjava.utils.JSONUtils;
+import com.github.jsonldjava.utils.JsonUtils;
 import com.hp.hpl.jena.rdf.model.Model;
 
 /**
@@ -88,7 +88,7 @@ public final class LobidResourcesAsNtriples2ElasticsearchLobidTest {
 		} catch (IOException | URISyntaxException e) {
 			e.printStackTrace();
 		}
-		testFile.deleteOnExit();
+		// testFile.deleteOnExit();
 	}
 
 	private static void buildAndExecuteFlow() {
@@ -100,8 +100,8 @@ public final class LobidResourcesAsNtriples2ElasticsearchLobidTest {
 		dirReader.setReceiver(opener).setReceiver(lr).setReceiver(triple2model)
 				.setReceiver(new RdfModel2ElasticsearchJsonLd())
 				.setReceiver(getElasticsearchIndexer());
-		dirReader
-				.process(new File("src/test/resources/hbz01Records").getAbsolutePath());
+		dirReader.process(
+				new File("src/test/resources/hbz01RecordsHash").getAbsolutePath());
 		opener.closeStream();
 		dirReader.closeStream();
 	}
@@ -123,6 +123,8 @@ public final class LobidResourcesAsNtriples2ElasticsearchLobidTest {
 	}
 
 	static class ElasticsearchDocuments {
+		private static final JsonLdOptions JsonLdTripleCallback = null;
+
 		static private SearchResponse getElasticsearchDocuments() {
 			return client.prepareSearch(LOBID_RESOURCES)
 					.setQuery(new MatchAllQueryBuilder()).setFrom(0).setSize(10000)
@@ -144,9 +146,10 @@ public final class LobidResourcesAsNtriples2ElasticsearchLobidTest {
 
 		private static String toRdf(final String jsonLd) {
 			try {
-				final Object jsonObject = JSONUtils.fromString(jsonLd);
-				final JenaTripleCallback callback = new JenaTripleCallback();
-				final Model model = (Model) JsonLdProcessor.toRDF(jsonObject, callback);
+				final Object jsonObject = JsonUtils.fromString(jsonLd);
+
+				final Model model =
+						(Model) JsonLdProcessor.toRDF(jsonObject, JsonLdTripleCallback);
 				final StringWriter writer = new StringWriter();
 				model.write(writer, N_TRIPLE);
 				return writer.toString();
