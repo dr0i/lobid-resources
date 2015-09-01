@@ -37,9 +37,9 @@ h1. Example of getting the data
 
 In the online test the data is indexed to a living elasticsearch instance.
 This instance is only reachable within our internally network, thus this test
-must be executed manually. Then elasticsearch can be queried like this:
+must be executed manually. You can use the elasticsearch API for querying, e.g.:
 
-    @curl "http://weywot2.hbz-nrw.de:9200/resources/resource/_search?q=HT002619538"@
+    @curl "http://weywot2.hbz-nrw.de:9200/resources/resource/HT002619538"@
 
 The result shows the data which also LobidResources2ElasticsearchLobidTest produces.
 
