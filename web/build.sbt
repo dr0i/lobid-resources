@@ -24,6 +24,10 @@ libraryDependencies ++= Seq(
   "org.easytesting" % "fest-assert" % "1.4" % "test"
 )
 
+resolvers += "Local Maven Repository" at "file:///home/pc/.m2/repository"
+
+libraryDependencies += "org.lobid" % "lobid-resources" % "0.4-SNAPSHOT" changing()
+
 lazy val root = (project in file(".")).enablePlugins(PlayJava)
 
 javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
