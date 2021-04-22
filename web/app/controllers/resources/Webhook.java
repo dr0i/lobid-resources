@@ -27,7 +27,7 @@ public class Webhook extends Controller {
   private static final String EMAIL =
       Application.CONFIG.getString("webhook.email");
   private static final String INDEX_UPDATE_ALIAS_SUFFIX = "NOALIAS";
-  private static final String INDEX_BASEDUMP_ALIAS_SUFFIX = "-staging";
+  private static final String INDEX_BASEDUMP_ALIAS_SUFFIX = "NOALIAS";
   private static final String UPDATE_NEWEST_INDEX = "exact";
   private static final String CREATE_INDEX = "create";
   private static final String CREATE_INDEX_NAME = INDEX_NAME + "-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-kkmm"));
